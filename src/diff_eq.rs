@@ -298,6 +298,10 @@ impl System {
         Ok(System { time_var, eqns })
     }
 
+    pub fn contains_var<Q: Borrow<str>>(&self, name: &Q) -> bool {
+        self.eqns.contains_key(name.borrow())
+    }
+
     // On error, returns the missing variable
     pub fn euler<'a>(&'a self, step_size: f64, mut state: State) -> Result<EulerIter<'a>, SemanticError> {
         // Check that all variables are present

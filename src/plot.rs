@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::path::Path;
+use std::str::FromStr;
 use std::fmt;
 
 use image::{RgbImage, Rgb, ImageOutputFormat};
@@ -34,12 +35,38 @@ impl fmt::Display for SaveError {
     }
 }
 
-pub type Color = Rgb<u8>;
-pub const COLOR_BLACK: Color = Rgb([0, 0, 0]);
-pub const COLOR_RED: Color = Rgb([255, 0, 0]);
-pub const COLOR_GREEN: Color = Rgb([0, 255, 0]);
-pub const COLOR_BLUE: Color = Rgb([0, 0, 255]);
-pub const COLOR_WHITE: Color = Rgb([255, 255, 255]);
+
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Color(Rgb<u8>);
+
+impl FromStr for Color {
+    type Err = String;
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        if let Some(s) = string.strip_prefix("rgb:") {
+            match TryInto::<[&str; 3]>::try_into(s.split(",").collect::<Vec<&str>>()) {
+                Ok([red, green, blue]) => match (red.parse(), green.parse(), blue.parse()){
+                    (Ok(r), Ok(g), Ok(b)) => Ok(Color(Rgb([r, g, b]))),
+                    _ => Err(string.into()),
+                },
+                Err(_) => Err(string.into()),
+            }
+        } else {
+            match string {
+                "black" => Ok(Color(Rgb([0, 0, 0]))),
+                "red" => Ok(Color(Rgb([255, 0, 0]))),
+                "green" => Ok(Color(Rgb([0, 255, 0]))),
+                "blue" => Ok(Color(Rgb([0, 0, 255]))),
+                "cyan" => Ok(Color(Rgb([0, 255, 255]))),
+                "magenta" => Ok(Color(Rgb([255, 0, 255]))),
+                "yellow" => Ok(Color(Rgb([255, 255, 0]))),
+                "white" => Ok(Color(Rgb([255, 255, 255]))),
+                _ => Err(string.into()),
+            }
+        }
+    }
+}
+
 
 pub struct Plot {
     view: View,
@@ -48,13 +75,13 @@ pub struct Plot {
 
 impl Plot {
     pub fn new(view: View, cols: u32, rows: u32, color: Color) -> Self {
-        Plot { view, image: RgbImage::from_pixel(cols, rows, color) }
+        Plot { view, image: RgbImage::from_pixel(cols, rows, color.0) }
     }
 
     fn put_pixel(&mut self, pt: (i32, i32), color: Color) -> bool {
         let (width, height) = self.image.dimensions();
         if 0 <= pt.0 && (pt.0 as u32) < width && 0 <= pt.1 && (pt.1 as u32) < height {
-            self.image.put_pixel(pt.0 as u32, pt.1 as u32, color);
+            self.image.put_pixel(pt.0 as u32, pt.1 as u32, color.0);
             true
         } else {
             false

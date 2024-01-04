@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use clap::{Command, error::ErrorKind};
 
 use diff_eq::{Eqns, System, State};
-use plot::{Plot, View};
+use plot::{Plot, View, Color};
 
 #[macro_use]
 extern crate clap;
@@ -32,14 +32,14 @@ fn main() {
     .args(&[
         arg!(-o --output <IMG_FILE> "File to write the plot to")
             .value_parser(value_parser!(PathBuf)),
-        arg!(equations: <EQNS> "List of equations defining the system")
-            .long_help(concat!(
+        arg!(equations: <EQNS> "")
+            .help(concat!(
                 "Semicolon separated list of differential equations defining the system\n",
                 "(i.e. \"x' = x * z; y''' = sin(x - y); z'' = x * y\")i",
             ))
             .value_parser(value_parser!(Eqns)),
-        arg!(-i --init <STATE> ... "List of initial values for the variables")
-            .long_help(concat!(
+        arg!(-i --init <STATE> ... "")
+            .help(concat!(
                 "Semicolon separated list of equations defining the initial state\n",
                 "(i.e. \"t = -0.5; x = 1.5; y = -3; y' = -0.1; y'' = 5 * cos(pi / 7); z = 4; z' = 3 - pi\")",
             ))
@@ -54,7 +54,7 @@ fn main() {
             .default_value("10.0")
             .value_parser(value_parser!(f64)),
         arg!(-s --step [TIME] "Amount of time elapsed for each step of numerical approximation")
-            .default_value("0.01")
+            .default_value("0.001")
             .value_parser(value_parser!(f64)),
         arg!(-c --center [COORD_PAIR] "Center of viewing window such as \"1.2,-2.1\"")
             .default_value("0.0,0.0"),
@@ -64,17 +64,28 @@ fn main() {
         arg!(-H --"win-height" [UNITS] "Height of the viewing window")
             .default_value("10.0")
             .value_parser(value_parser!(f64)),
-        arg!(-C --"img-width" [PIXELS] "Width of the image in pixels")
+        arg!(-J --"img-width" [PIXELS] "Width of the image in pixels")
             .default_value("700")
             .value_parser(value_parser!(u32)),
-        arg!(-R --"img-height" [PIXELS] "Height of the image in pixels")
+        arg!(-K --"img-height" [PIXELS] "Height of the image in pixels")
             .default_value("700")
             .value_parser(value_parser!(u32)),
+        arg!(--color [COLOR] "Color of solution curves")
+            .default_value("red")
+            .value_parser(value_parser!(Color)),
+        arg!(--"bkg-color" [COLOR] "Color of background of the plot")
+            .default_value("white")
+            .value_parser(value_parser!(Color)),
+        arg!(--"grid-color" [COLOR] "Color of gridlines")
+            .default_value("black")
+            .value_parser(value_parser!(Color)),
     ])
     .after_help(concat!(
         "For the initial state, all derivatives less than the one defining a variable must be given.\n",
         "For example, if \"y''' = -x^3\" then y, y', and y'' must be provided in the initial state.\n",
         "If no initial time is provided in the state then 't = 0' will be used.\n",
+        "Possible colors are 'white', 'red', 'green', 'blue', 'cyan', 'magenta', 'yellow', and 'black'.\n",
+        "Alternatively, one can provide specific colors like 'rgb:134,23,190'\n",
         "\n",
         "Examples:\n",
         "  # Plot a circle\n",
@@ -89,8 +100,22 @@ fn main() {
 
     let eqns = matches.remove_one("equations").unwrap();
     let time_var = matches.remove_one("time-var").unwrap();
+    let horiz_var: String = matches.remove_one("horiz-var").unwrap();
+    let vert_var: String = matches.remove_one("vert-var").unwrap();
     let system = System::new(time_var, eqns).unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit());
-    
+
+    // Check that the system contains `horiz_var` and `vert_var`
+    if !system.contains_var(&horiz_var) {
+        prog.error(ErrorKind::InvalidValue, format!(
+            "Missing equation for horizontal variable {}", horiz_var
+        )).exit();
+    } else if !system.contains_var(&vert_var) {
+        prog.error(ErrorKind::InvalidValue, format!(
+            "Missing equation for vertical variable {}", vert_var
+        )).exit();
+    }
+
+    // Construct viewing window and plotter
     let center = parse_coord(matches.remove_one("center").unwrap())
         .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit());
     let view = View::new(center,
@@ -100,23 +125,21 @@ fn main() {
     let mut plot = Plot::new(view,
         matches.remove_one("img-width").unwrap(),
         matches.remove_one("img-height").unwrap(),
-        plot::COLOR_BLACK,
+        matches.remove_one("bkg-color").unwrap(),
     );
 
-    plot.draw_gridlines(10, 10, 0.5, plot::COLOR_WHITE);
+    plot.draw_gridlines(10, 10, 0.5, matches.remove_one("grid-color").unwrap());
 
     let duration: f64 = matches.remove_one("duration").unwrap();
     let step_size: f64 = matches.remove_one("step").unwrap();
     let step_count = (duration / step_size).ceil() as usize;
-    let horiz_var: String = matches.remove_one("horiz-var").unwrap();
-    let vert_var: String = matches.remove_one("vert-var").unwrap();
     let state_iter = matches.remove_many("init").unwrap();
     for init in state_iter {
         let euler_iter = system.euler(step_size, init)
             .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit())
             .take(step_count)
             .map(|state| (state[&horiz_var], state[&vert_var]));
-        plot.draw_curve(euler_iter, 0.5, plot::COLOR_RED);
+        plot.draw_curve(euler_iter, 0.5, matches.remove_one("color").unwrap());
     }
 
     let filename: PathBuf = matches.remove_one("output").unwrap();
