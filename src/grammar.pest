@@ -1,0 +1,56 @@
+int = @{ ASCII_DIGIT+ }
+num = @{ int ~ ("." ~ ASCII_DIGIT*)? ~ (^"e" ~ ("+" | "-")? ~ int)? }
+
+literal = { num }
+deriv = @{ "'"* }
+name = @{ ASCII_ALPHA ~ ASCII_ALPHANUMERIC* }
+var = ${ name ~ deriv }
+
+
+cnst = { "e" | "pi" }
+
+func_name = {
+	"sqrt" | "cbrt" |
+	"abs" | "frac" | "floor" | "ceil" | "round" |
+	"sin" | "cos" | "tan" |
+	"sec" | "csc" | "cot" |
+	"asin" | "acos" | "atan" |
+	"asec" | "acsc" | "acot" |
+	"sinh" | "cosh" | "tanh" |
+	"sech" | "csch" | "coth" |
+	"asinh" | "acosh" | "atanh" |
+	"asech" | "acsch" | "acoth" |
+	"exp" | "ln" | "log2" | "log10"
+}
+func2_name = { "atan2" | "log" }
+
+bare_arg = { term }
+func = { func_name ~ ("(" ~ expr ~ ")" | bare_arg) }
+func2 = { func2_name ~ ("(" ~ expr ~ "," ~ expr ~ ")" | bare_arg ~ bare_arg) }
+
+neg = { "-" }
+unary = _{ neg }
+
+add = { "+" }
+sub = { "-" }
+mul = { "*" }
+div = { "/" }
+rem = { "%" }
+flrdiv = { "//" }
+pow = { "^" }
+max = { "\\/" | "|" }
+min = { "/\\" | "&" }
+oper = _{
+	max | min |
+	add | sub |
+	mul | div | rem | flrdiv |
+	pow
+}
+
+term = _{ "(" ~ expr ~ ")" | cnst | func | func2 | literal | var }
+expr = { unary* ~ term ~ (oper ~ unary* ~ term)* }
+
+eqn = { var ~ "=" ~ expr }
+system = { SOI ~ eqn ~ (";" ~ eqn?)* ~ EOI}
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+

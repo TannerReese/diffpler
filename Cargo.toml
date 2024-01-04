@@ -1,0 +1,11 @@
+[package]
+name = "diffpler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lazy_static = "1.4"
+clap = "4.4"
+pest = "2.7"
+pest_derive = "2.7"
+image = "0.24"
