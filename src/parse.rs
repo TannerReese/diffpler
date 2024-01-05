@@ -6,7 +6,7 @@ use pest::pratt_parser::{Op, PrattParser};
 use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
 
-use crate::diff_eq::{Binary, Expr, Eqns, Unary, Var};
+use crate::diff_eq::{Binary, Eqns, Expr, Unary, Var};
 
 // Pratt Parser for parsing expressions with precedence
 lazy_static! {
@@ -82,12 +82,18 @@ fn binary_from_str(name: &str) -> Binary {
 }
 
 fn split<const N: usize>(pair: Pair<Rule>) -> [Pair<Rule>; N] {
-    pair.into_inner().collect::<Vec<Pair<Rule>>>().try_into().unwrap()
+    pair.into_inner()
+        .collect::<Vec<Pair<Rule>>>()
+        .try_into()
+        .unwrap()
 }
 
 fn parse_var(var: Pair<Rule>) -> Var {
     let [name, order] = split(var);
-    Var { name: name.as_str().into(), order: order.as_str().len() }
+    Var {
+        name: name.as_str().into(),
+        order: order.as_str().len(),
+    }
 }
 
 fn parse_expr(expr: Pair<Rule>) -> Expr {
@@ -145,13 +151,17 @@ impl FromStr for Eqns {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut pairs = SysParser::parse(Rule::system, s)?;
         let system = pairs.next().unwrap();
-        let eqns = system.into_inner().filter_map(|eqn| {
-            if let Rule::eqn = eqn.as_rule() {
-                let [var, expr] = split(eqn);
-                Some((parse_var(var), parse_expr(expr)))
-            } else { None }
-        }).collect::<HashMap<Var, Expr>>();
+        let eqns = system
+            .into_inner()
+            .filter_map(|eqn| {
+                if let Rule::eqn = eqn.as_rule() {
+                    let [var, expr] = split(eqn);
+                    Some((parse_var(var), parse_expr(expr)))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<Var, Expr>>();
         Ok(Eqns(eqns))
     }
 }
-

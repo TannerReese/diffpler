@@ -1,17 +1,17 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
 use std::ops::{Index, IndexMut};
-use std::borrow::Borrow;
 use std::str::FromStr;
-use std::fmt;
 
 use crate::parse::ParseError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Var {
     pub name: String,
-    pub order: usize,  // Order of its derivative
+    pub order: usize, // Order of its derivative
 }
 
 impl fmt::Display for Var {
@@ -27,7 +27,7 @@ impl fmt::Display for Var {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticError {
     // Equation does not parse correctly
-    InvalidEqns(ParseError),
+    InvalidEqns(Box<ParseError>),
     // When expression should be constant, but isn't
     ExprNonConst(String),
     // Variable `Var` is missing a value for derivative of some order
@@ -50,22 +50,41 @@ impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             SemanticError::InvalidEqns(err) => write!(f, "Could not parse equation: {}", err),
-            SemanticError::ExprNonConst(expr) => write!(f, "Expression did not evaluate to constant: {}", expr),
+            SemanticError::ExprNonConst(expr) => {
+                write!(f, "Expression did not evaluate to constant: {}", expr)
+            }
             SemanticError::MissingDeriv(var) => write!(f, "No value provided for {}", var),
-            SemanticError::RepeatOutputVar(var) => write!(f, "Multiple equations for variable {}", var),
-            SemanticError::RepeatOutputName(name) => write!(f, "Multiple equations (potentially with different derivatives) for variable name {}", name),
-            SemanticError::DerivOfTime(var) => write!(f, "Time variable {} cannot have derivative: {}", var.name, var),
-            SemanticError::InputOrderTooHigh(var, out_order) => if *out_order == 0 {
-                write!(f, "Output variable {} should be a derivative", var.name)
-            } else {
-                write!(f, "Input variable {} has order exceeding the maximum order {}", var, out_order - 1)
-            },
-            SemanticError::MissingEquation(name) => write!(f, "Variable {} has no equation defining its behavior", name),
+            SemanticError::RepeatOutputVar(var) => {
+                write!(f, "Multiple equations for variable {}", var)
+            }
+            SemanticError::RepeatOutputName(name) => write!(
+                f,
+                "Multiple equations (potentially with different derivatives) for variable name {}",
+                name
+            ),
+            SemanticError::DerivOfTime(var) => write!(
+                f,
+                "Time variable {} cannot have derivative: {}",
+                var.name, var
+            ),
+            SemanticError::InputOrderTooHigh(var, out_order) => {
+                if *out_order == 0 {
+                    write!(f, "Output variable {} should be a derivative", var.name)
+                } else {
+                    write!(
+                        f,
+                        "Input variable {} has order exceeding the maximum order {}",
+                        var,
+                        out_order - 1
+                    )
+                }
+            }
+            SemanticError::MissingEquation(name) => {
+                write!(f, "Variable {} has no equation defining its behavior", name)
+            }
         }
     }
 }
-
-
 
 #[derive(Debug, Clone)]
 pub struct State {
@@ -73,10 +92,10 @@ pub struct State {
     vars: HashMap<String, Vec<f64>>,
 }
 
-fn split_deriv<'a>(s: &'a str) -> (&'a str, usize) {
+fn split_deriv(s: &str) -> (&str, usize) {
     let mut var = s.trim();
     let mut order = 0;
-    while let Some(new_var) = var.strip_suffix("'") {
+    while let Some(new_var) = var.strip_suffix('\'') {
         var = new_var;
         order += 1;
     }
@@ -102,14 +121,16 @@ impl FromStr for State {
     type Err = SemanticError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut vars = HashMap::<String, Vec<Option<f64>>>::new();
-        let eqns = s.parse::<Eqns>().map_err(SemanticError::InvalidEqns)?;
+        let eqns = s
+            .parse::<Eqns>()
+            .map_err(|err| SemanticError::InvalidEqns(Box::new(err)))?;
         for (Var { name, order }, expr) in eqns.0.into_iter() {
-            if let Expr::Const(value) = expr { 
+            if let Expr::Const(value) = expr {
                 if let Some(derivs) = vars.get_mut(&name) {
                     if order >= derivs.len() {
                         derivs.resize_with(order + 1, || None);
-                    } else if let Some(_) = derivs[order] {
-                        return Err(SemanticError::RepeatOutputVar(Var { name, order }))
+                    } else if derivs[order].is_some() {
+                        return Err(SemanticError::RepeatOutputVar(Var { name, order }));
                     }
                     derivs[order] = Some(value);
                 } else {
@@ -119,7 +140,7 @@ impl FromStr for State {
                     vars.insert(name, derivs);
                 }
             } else {
-                return Err(SemanticError::ExprNonConst(s.into()))
+                return Err(SemanticError::ExprNonConst(s.into()));
             }
         }
 
@@ -132,7 +153,7 @@ impl FromStr for State {
                     derivs_unwrap.push(value);
                 } else {
                     let name = name.clone();
-                    return Err(SemanticError::MissingDeriv(Var { name, order }))
+                    return Err(SemanticError::MissingDeriv(Var { name, order }));
                 }
             }
             vars_unwrap.insert(name, derivs_unwrap);
@@ -141,16 +162,12 @@ impl FromStr for State {
     }
 }
 
-
-
-
-
 pub type Unary = fn(f64) -> f64;
 pub type Binary = fn(f64, f64) -> f64;
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Var(Var),  // Variable name and order of derivative
+    Var(Var), // Variable name and order of derivative
     Const(f64),
     Unary(Unary, Box<Expr>),
     Binary(Binary, Box<Expr>, Box<Expr>),
@@ -239,15 +256,11 @@ impl Rem for Expr {
     }
 }
 
-
-
 // Store equations keyed by the variable name
 // with the value being the the order of the output derivative
 // and the expression defining the derivative.
 #[derive(Debug, Clone)]
 pub struct Eqns(pub HashMap<Var, Expr>);
-
-
 
 #[derive(Debug, Clone)]
 pub struct System {
@@ -259,9 +272,9 @@ impl System {
     pub fn new(time_var: String, eqns: Eqns) -> Result<Self, SemanticError> {
         // Re-key equations by the name of their output variable
         let mut eqns_by_name = HashMap::new();
-        for (Var {name, order}, expr) in eqns.0.into_iter() {
+        for (Var { name, order }, expr) in eqns.0.into_iter() {
             if eqns_by_name.contains_key(&name) {
-                return Err(SemanticError::RepeatOutputName(name))
+                return Err(SemanticError::RepeatOutputName(name));
             }
             eqns_by_name.insert(name, (order, expr));
         }
@@ -284,14 +297,23 @@ impl System {
         for (&name, &order) in inputs.iter() {
             if name == time_var {
                 if order > 0 {
-                    return Err(SemanticError::DerivOfTime(Var { name: time_var, order }))
+                    return Err(SemanticError::DerivOfTime(Var {
+                        name: time_var,
+                        order,
+                    }));
                 }
             } else if let Some(&(out_order, _)) = eqns.get(name) {
                 if order >= out_order {
-                    return Err(SemanticError::InputOrderTooHigh(Var { name: name.into(), order }, out_order))
+                    return Err(SemanticError::InputOrderTooHigh(
+                        Var {
+                            name: name.into(),
+                            order,
+                        },
+                        out_order,
+                    ));
                 }
             } else {
-                return Err(SemanticError::MissingEquation(name.into()))
+                return Err(SemanticError::MissingEquation(name.into()));
             }
         }
 
@@ -303,26 +325,32 @@ impl System {
     }
 
     // On error, returns the missing variable
-    pub fn euler<'a>(&'a self, step_size: f64, mut state: State) -> Result<EulerIter<'a>, SemanticError> {
+    pub fn euler(&self, step_size: f64, mut state: State) -> Result<EulerIter<'_>, SemanticError> {
         // Check that all variables are present
         for (name, (order, _)) in self.eqns.iter() {
             if let Some(derivs) = state.vars.get(name) {
                 if derivs.len() < *order {
                     return Err(SemanticError::MissingDeriv(Var {
-                        name: name.clone(), order: derivs.len(),
-                    }))
+                        name: name.clone(),
+                        order: derivs.len(),
+                    }));
                 }
             } else {
                 return Err(SemanticError::MissingDeriv(Var {
-                    name: name.clone(), order: 0,
-                }))
+                    name: name.clone(),
+                    order: 0,
+                }));
             }
         }
 
         if !state.vars.contains_key(&self.time_var) {
             state.vars.insert(self.time_var.clone(), vec![0.0]);
         }
-        Ok(EulerIter { system: self, step_size, state })
+        Ok(EulerIter {
+            system: self,
+            step_size,
+            state,
+        })
     }
 }
 
@@ -336,17 +364,22 @@ impl<'a> Iterator for EulerIter<'a> {
     type Item = State;
     fn next(&mut self) -> Option<Self::Item> {
         // Calculate new values for non-time variables
-        let mut new_vars: HashMap<String, Vec<f64>> = self.system.eqns.iter().map(|(name, (out_order, expr))| {
-            let max_order = out_order - 1;
-            let vals = &self.state.vars[name];
-            let mut new_vals = Vec::new();
+        let mut new_vars: HashMap<String, Vec<f64>> = self
+            .system
+            .eqns
+            .iter()
+            .map(|(name, (out_order, expr))| {
+                let max_order = out_order - 1;
+                let vals = &self.state.vars[name];
+                let mut new_vals = Vec::new();
 
-            for order in 0..max_order {
-                new_vals.push(vals[order] + self.step_size * vals[order + 1]);
-            }
-            new_vals.push(vals[max_order] + self.step_size * expr.eval(&self.state));
-            (name.clone(), new_vals)
-        }).collect();
+                for order in 0..max_order {
+                    new_vals.push(vals[order] + self.step_size * vals[order + 1]);
+                }
+                new_vals.push(vals[max_order] + self.step_size * expr.eval(&self.state));
+                (name.clone(), new_vals)
+            })
+            .collect();
 
         // Calculate new value of time variable
         let time_var = self.system.time_var.as_str();

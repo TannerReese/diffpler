@@ -1,8 +1,8 @@
+use clap::{error::ErrorKind, Command};
 use std::path::PathBuf;
-use clap::{Command, error::ErrorKind};
 
-use diff_eq::{Eqns, System, State};
-use plot::{Plot, View, Color};
+use diff_eq::{Eqns, State, System};
+use plot::{Color, Plot, View};
 
 #[macro_use]
 extern crate clap;
@@ -24,7 +24,6 @@ fn parse_coord(s: String) -> Result<(f64, f64), String> {
         Err(_) => Err(s),
     }
 }
-
 
 fn main() {
     let mut prog = Command::new("differ")
@@ -97,32 +96,38 @@ fn main() {
     ));
     let mut matches = prog.clone().get_matches();
 
-
     let eqns = matches.remove_one("equations").unwrap();
     let time_var = matches.remove_one("time-var").unwrap();
     let horiz_var: String = matches.remove_one("horiz-var").unwrap();
     let vert_var: String = matches.remove_one("vert-var").unwrap();
-    let system = System::new(time_var, eqns).unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit());
+    let system = System::new(time_var, eqns)
+        .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit());
 
     // Check that the system contains `horiz_var` and `vert_var`
     if !system.contains_var(&horiz_var) {
-        prog.error(ErrorKind::InvalidValue, format!(
-            "Missing equation for horizontal variable {}", horiz_var
-        )).exit();
+        prog.error(
+            ErrorKind::InvalidValue,
+            format!("Missing equation for horizontal variable {}", horiz_var),
+        )
+        .exit();
     } else if !system.contains_var(&vert_var) {
-        prog.error(ErrorKind::InvalidValue, format!(
-            "Missing equation for vertical variable {}", vert_var
-        )).exit();
+        prog.error(
+            ErrorKind::InvalidValue,
+            format!("Missing equation for vertical variable {}", vert_var),
+        )
+        .exit();
     }
 
     // Construct viewing window and plotter
     let center = parse_coord(matches.remove_one("center").unwrap())
         .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit());
-    let view = View::new(center,
+    let view = View::new(
+        center,
         matches.remove_one("win-width").unwrap(),
         matches.remove_one("win-height").unwrap(),
     );
-    let mut plot = Plot::new(view,
+    let mut plot = Plot::new(
+        view,
         matches.remove_one("img-width").unwrap(),
         matches.remove_one("img-height").unwrap(),
         matches.remove_one("bkg-color").unwrap(),
@@ -135,7 +140,8 @@ fn main() {
     let step_count = (duration / step_size).ceil() as usize;
     let state_iter = matches.remove_many("init").unwrap();
     for init in state_iter {
-        let euler_iter = system.euler(step_size, init)
+        let euler_iter = system
+            .euler(step_size, init)
             .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit())
             .take(step_count)
             .map(|state| (state[&horiz_var], state[&vert_var]));
@@ -143,8 +149,7 @@ fn main() {
     }
 
     let filename: PathBuf = matches.remove_one("output").unwrap();
-    match plot.save(filename) {
-        Err(err) => prog.error(ErrorKind::Io, err).exit(),
-        Ok(_) => return,
+    if let Err(err) = plot.save(filename) {
+        prog.error(ErrorKind::Io, err).exit()
     }
 }

@@ -1,20 +1,22 @@
+use std::fmt;
 use std::fs::File;
 use std::path::Path;
 use std::str::FromStr;
-use std::fmt;
 
-use image::{RgbImage, Rgb, ImageOutputFormat};
-
+use image::{ImageOutputFormat, Rgb, RgbImage};
 
 pub struct View {
-    pub xmin: f64, pub ymin: f64,
-    pub width: f64, pub height: f64,
+    pub xmin: f64,
+    pub ymin: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 impl View {
     pub fn new(center: (f64, f64), width: f64, height: f64) -> Self {
         View {
-            width, height,
+            width,
+            height,
             xmin: center.0 - width / 2.0,
             ymin: center.1 - height / 2.0,
         }
@@ -35,8 +37,6 @@ impl fmt::Display for SaveError {
     }
 }
 
-
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Color(Rgb<u8>);
 
@@ -44,8 +44,8 @@ impl FromStr for Color {
     type Err = String;
     fn from_str(string: &str) -> Result<Self, Self::Err> {
         if let Some(s) = string.strip_prefix("rgb:") {
-            match TryInto::<[&str; 3]>::try_into(s.split(",").collect::<Vec<&str>>()) {
-                Ok([red, green, blue]) => match (red.parse(), green.parse(), blue.parse()){
+            match TryInto::<[&str; 3]>::try_into(s.split(',').collect::<Vec<&str>>()) {
+                Ok([red, green, blue]) => match (red.parse(), green.parse(), blue.parse()) {
                     (Ok(r), Ok(g), Ok(b)) => Ok(Color(Rgb([r, g, b]))),
                     _ => Err(string.into()),
                 },
@@ -67,7 +67,6 @@ impl FromStr for Color {
     }
 }
 
-
 pub struct Plot {
     view: View,
     image: RgbImage,
@@ -75,7 +74,10 @@ pub struct Plot {
 
 impl Plot {
     pub fn new(view: View, cols: u32, rows: u32, color: Color) -> Self {
-        Plot { view, image: RgbImage::from_pixel(cols, rows, color.0) }
+        Plot {
+            view,
+            image: RgbImage::from_pixel(cols, rows, color.0),
+        }
     }
 
     fn put_pixel(&mut self, pt: (i32, i32), color: Color) -> bool {
@@ -88,18 +90,20 @@ impl Plot {
         }
     }
 
-    fn from_coords(&self, coord: (f64, f64)) -> (i32, i32) {
+    fn coords_to_pixel(&self, coord: (f64, f64)) -> (i32, i32) {
         let c = (coord.0 - self.view.xmin) / self.view.width;
         let r = 1.0 - (coord.1 - self.view.ymin) / self.view.height;
-        let (c, r) = (c * (self.image.width() as f64), r * (self.image.height() as f64));
+        let (c, r) = (
+            c * (self.image.width() as f64),
+            r * (self.image.height() as f64),
+        );
         (c.floor() as i32, r.floor() as i32)
     }
 
     // Use Bresenham's algorithm with modification
     pub fn draw_line(&mut self, a: (f64, f64), b: (f64, f64), thickness: f64, color: Color) {
         // Convert to pixel coordinates
-        let (mut a, mut b) = (self.from_coords(a), self.from_coords(b));
-
+        let (mut a, mut b) = (self.coords_to_pixel(a), self.coords_to_pixel(b));
 
         let (mut dx, mut dy) = (b.0 - a.0, b.1 - a.1);
         let steep = dy.abs() > dx.abs();
@@ -121,12 +125,12 @@ impl Plot {
         let vert_range = (thickness * secant).abs().floor() as i32;
 
         // Track current midline pixel and error
-        let mut mid_y: i32 = a.1 as i32;
+        let mut mid_y: i32 = a.1;
         // If f(x) defines the line then
         //   error = (f(x) - y) * dx
         let mut error: i32 = 0;
-        for x in (a.0 as i32) .. (b.0 as i32) + 1 {
-            for y in mid_y - vert_range .. mid_y + vert_range + 1 {
+        for x in a.0..b.0 + 1 {
+            for y in mid_y - vert_range..mid_y + vert_range + 1 {
                 if steep {
                     self.put_pixel((y, x), color);
                 } else {
@@ -162,7 +166,6 @@ impl Plot {
             }
         };
 
-
         let (xmin, ymin) = (self.view.xmin, self.view.ymin);
         let (xmax, ymax) = (xmin + self.view.width, ymin + self.view.height);
 
@@ -176,7 +179,7 @@ impl Plot {
             self.draw_line((x, ymin), (x, ymax), line_width, color);
             x += dx;
         }
-        
+
         let dy = rectify_size(self.view.height / vert_divs as f64);
         let mut y = (ymin / dy + 0.01).ceil() * dy;
         while y < ymax {
@@ -189,10 +192,17 @@ impl Plot {
         }
     }
 
-    pub fn draw_curve<I: Iterator<Item=(f64, f64)>>(&mut self, mut iter: I, thickness: f64, color: Color) {
+    pub fn draw_curve<I: Iterator<Item = (f64, f64)>>(
+        &mut self,
+        mut iter: I,
+        thickness: f64,
+        color: Color,
+    ) {
         let mut last_pt;
         match iter.next() {
-            Some(pt) => { last_pt = pt; },
+            Some(pt) => {
+                last_pt = pt;
+            }
             None => return,
         }
 
@@ -202,7 +212,16 @@ impl Plot {
         }
     }
 
-    pub fn draw_arrow(&mut self, base: (f64, f64), direc: (f64, f64), thickness: f64, head_size: f64, color: Color) {
+    // This will be used for a future feature
+    #[allow(dead_code)]
+    pub fn draw_arrow(
+        &mut self,
+        base: (f64, f64),
+        direc: (f64, f64),
+        thickness: f64,
+        head_size: f64,
+        color: Color,
+    ) {
         // Draw body of arrow
         let head = (base.0 + direc.0, base.1 + direc.1);
         self.draw_line(base, head, thickness, color);
@@ -210,19 +229,58 @@ impl Plot {
         // Rotate direction by 45 degs
         let rt2 = (2.0_f64).sqrt();
         let direc_len = f64::hypot(direc.0, direc.1).max(0.01);
-        let right_ear = ((direc.0 - direc.1) / (direc_len * rt2), (direc.0 + direc.1) / (direc_len * rt2));
-        let left_ear = ((direc.0 + direc.1) / (direc_len * rt2), (-direc.0 + direc.1) / (direc_len * rt2));
+        let right_ear = (
+            (direc.0 - direc.1) / (direc_len * rt2),
+            (direc.0 + direc.1) / (direc_len * rt2),
+        );
+        let left_ear = (
+            (direc.0 + direc.1) / (direc_len * rt2),
+            (-direc.0 + direc.1) / (direc_len * rt2),
+        );
         // Use rotated and scaled vectors to draw head
-        self.draw_line(head, (head.0 - right_ear.0 * head_size, head.1 - right_ear.1 * head_size), thickness, color);
-        self.draw_line(head, (head.0 - left_ear.0 * head_size, head.1 - left_ear.1 * head_size), thickness, color);
+        self.draw_line(
+            head,
+            (
+                head.0 - right_ear.0 * head_size,
+                head.1 - right_ear.1 * head_size,
+            ),
+            thickness,
+            color,
+        );
+        self.draw_line(
+            head,
+            (
+                head.0 - left_ear.0 * head_size,
+                head.1 - left_ear.1 * head_size,
+            ),
+            thickness,
+            color,
+        );
     }
 
-    pub fn draw_field<F>(&mut self, horiz_divs: u8, vert_divs: u8, arrow_thick: f64, color: Color, mut field: F) where F: FnMut(f64, f64) -> (f64, f64) {
-        let (dx, dy) = (self.view.width / horiz_divs as f64, self.view.height / vert_divs as f64);
+    // This will be used for a future feature
+    #[allow(dead_code)]
+    pub fn draw_field<F>(
+        &mut self,
+        horiz_divs: u8,
+        vert_divs: u8,
+        arrow_thick: f64,
+        color: Color,
+        mut field: F,
+    ) where
+        F: FnMut(f64, f64) -> (f64, f64),
+    {
+        let (dx, dy) = (
+            self.view.width / horiz_divs as f64,
+            self.view.height / vert_divs as f64,
+        );
         let arrow_scaling = f64::min(dx, dy);
         let arrow_size = arrow_scaling * 0.2;
 
-        let (xmax, ymax) = (self.view.xmin + self.view.width, self.view.ymin + self.view.height);
+        let (xmax, ymax) = (
+            self.view.xmin + self.view.width,
+            self.view.ymin + self.view.height,
+        );
         let x_init = (self.view.xmin / dx + 0.01).ceil() * dx;
         let y_init = (self.view.ymin / dy + 0.01).ceil() * dy;
 
@@ -231,7 +289,13 @@ impl Plot {
             let mut y = y_init;
             while y < ymax {
                 let vec = field(x, y);
-                self.draw_arrow((x, y), (arrow_scaling * vec.0, arrow_scaling * vec.1), arrow_thick, arrow_size, color);
+                self.draw_arrow(
+                    (x, y),
+                    (arrow_scaling * vec.0, arrow_scaling * vec.1),
+                    arrow_thick,
+                    arrow_size,
+                    color,
+                );
                 y += dy;
             }
             x += dx;
@@ -239,7 +303,9 @@ impl Plot {
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), SaveError> {
-        let mut fl = File::create(path).map_err(|err| SaveError::IOError(err))?;
-        self.image.write_to(&mut fl, ImageOutputFormat::Png).map_err(|err| SaveError::ImageError(err))
+        let mut fl = File::create(path).map_err(SaveError::IOError)?;
+        self.image
+            .write_to(&mut fl, ImageOutputFormat::Png)
+            .map_err(SaveError::ImageError)
     }
 }
