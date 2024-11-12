@@ -30,11 +30,12 @@ fn main() {
     .about("Numerically solve and plot arbitrary order ODEs in multiple variables")
     .args(&[
         arg!(-o --output <IMG_FILE> "File to write the plot to")
+            .default_value("plot.png")
             .value_parser(value_parser!(PathBuf)),
         arg!(equations: <EQNS> "")
             .help(concat!(
                 "Semicolon separated list of differential equations defining the system\n",
-                "(i.e. \"x' = x * z; y''' = sin(x - y); z'' = x * y\")i",
+                "(i.e. \"x' = x * z; y''' = sin(x - y); z'' = x * y\")",
             ))
             .value_parser(value_parser!(Eqns)),
         arg!(-i --init <STATE> ... "")
@@ -49,13 +50,19 @@ fn main() {
             .default_value("y"),
         arg!(-t --"time-var" [VAR_NAME] "Name of time variable")
             .default_value("t"),
-        arg!(-d --duration [TIME] "Duration of time variable for which to simulate the system")
+        arg!(-d --duration [TIME] "Maximum duration of time for which to simulate the system")
             .default_value("10.0")
             .value_parser(value_parser!(f64)),
-        arg!(-s --step [TIME] "Amount of time elapsed for each step of numerical approximation")
-            .default_value("0.001")
+        arg!(-L --length [DISTANCE] "Maximum length (per dimension) of the plotted solution")
+            .default_value("10.0")
             .value_parser(value_parser!(f64)),
-        arg!(-c --center [COORD_PAIR] "Center of viewing window such as \"1.2,-2.1\"")
+        arg!(-s --"time-step" [TIME] "Maximum time elapsed during each step")
+            .default_value("0.01")
+            .value_parser(value_parser!(f64)),
+        arg!(-r --"length-step" [DISTANCE] "Maximum distance (per dimension) to travel during each step")
+            .default_value("0.01")
+            .value_parser(value_parser!(f64)),
+        arg!(-e --center [COORD_PAIR] "Center of viewing window such as \"1.2,-2.1\"")
             .default_value("0.0,0.0"),
         arg!(-W --"win-width" [UNITS] "Width of the viewing window")
             .default_value("10.0")
@@ -69,13 +76,13 @@ fn main() {
         arg!(-K --"img-height" [PIXELS] "Height of the image in pixels")
             .default_value("700")
             .value_parser(value_parser!(u32)),
-        arg!(--color [COLOR] "Color of solution curves")
+        arg!(-c --color [COLOR] ... "Color of solution curves")
             .default_value("red")
             .value_parser(value_parser!(Color)),
-        arg!(--"bkg-color" [COLOR] "Color of background of the plot")
+        arg!(-B --"bkg-color" [COLOR] "Color of background of the plot")
             .default_value("white")
             .value_parser(value_parser!(Color)),
-        arg!(--"grid-color" [COLOR] "Color of gridlines")
+        arg!(-G --"grid-color" [COLOR] "Color of gridlines")
             .default_value("black")
             .value_parser(value_parser!(Color)),
     ])
@@ -97,26 +104,11 @@ fn main() {
     let mut matches = prog.clone().get_matches();
 
     let eqns = matches.remove_one("equations").unwrap();
-    let time_var = matches.remove_one("time-var").unwrap();
-    let horiz_var: String = matches.remove_one("horiz-var").unwrap();
-    let vert_var: String = matches.remove_one("vert-var").unwrap();
-    let system = System::new(time_var, eqns)
+    let time_var: String = matches.remove_one("time-var").unwrap();
+    let horiz_var = matches.remove_one("horiz-var").unwrap();
+    let vert_var = matches.remove_one("vert-var").unwrap();
+    let system = System::new(time_var.clone(), horiz_var, vert_var, eqns)
         .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit());
-
-    // Check that the system contains `horiz_var` and `vert_var`
-    if !system.contains_var(&horiz_var) {
-        prog.error(
-            ErrorKind::InvalidValue,
-            format!("Missing equation for horizontal variable {}", horiz_var),
-        )
-        .exit();
-    } else if !system.contains_var(&vert_var) {
-        prog.error(
-            ErrorKind::InvalidValue,
-            format!("Missing equation for vertical variable {}", vert_var),
-        )
-        .exit();
-    }
 
     // Construct viewing window and plotter
     let center = parse_coord(matches.remove_one("center").unwrap())
@@ -135,17 +127,29 @@ fn main() {
 
     plot.draw_gridlines(10, 10, 0.5, matches.remove_one("grid-color").unwrap());
 
-    let duration: f64 = matches.remove_one("duration").unwrap();
-    let step_size: f64 = matches.remove_one("step").unwrap();
-    let step_count = (duration / step_size).ceil() as usize;
+    let max_time: f64 = matches.remove_one("duration").unwrap();
+    let max_length: f64 = matches.remove_one("length").unwrap();
+    let time_step: f64 = matches.remove_one("time-step").unwrap();
+    let length_step: f64 = matches.remove_one("length-step").unwrap();
     let state_iter = matches.remove_many("init").unwrap();
-    for init in state_iter {
+    let mut color = *matches.get_one("color").unwrap();
+    for mut init in state_iter {
+        // Set the initial time to zero if not given
+        if !State::has_var(&init, &time_var) {
+            init[&time_var] = 0.0;
+        }
+
+        // Create the Euler iterator
         let euler_iter = system
-            .euler(step_size, init)
+            .euler(init, time_step, length_step)
             .unwrap_or_else(|err| prog.error(ErrorKind::InvalidValue, err).exit())
-            .take(step_count)
-            .map(|state| (state[&horiz_var], state[&vert_var]));
-        plot.draw_curve(euler_iter, 0.5, matches.remove_one("color").unwrap());
+            .take_while(|&(time, length, _)| time < max_time && length < max_length)
+            .map(|(_, _, point)| point);
+
+        if let Some(new_color) = matches.remove_one("color") {
+            color = new_color;
+        }
+        plot.draw_curve(euler_iter, 0.5, color);
     }
 
     let filename: PathBuf = matches.remove_one("output").unwrap();

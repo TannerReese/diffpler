@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
-use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Rem, Sub};
 use std::ops::{Index, IndexMut};
 use std::str::FromStr;
 
@@ -40,8 +40,14 @@ pub enum SemanticError {
     DerivOfTime(Var),
     // The order of an input variable `Var` is equal to or exceeds the output order `usize`.
     InputOrderTooHigh(Var, usize),
+    // There is an equation assigning a value to the undifferentiated variable `String`
+    ZerothOrderOutput(String),
     // The non-time variable `String` has no equation defining it
     MissingEquation(String),
+    // No equation given for the horizontal variable
+    MissingHorizontal(String),
+    // No equation given for the vertical variable
+    MissingVertical(String),
 }
 
 impl std::error::Error for SemanticError {}
@@ -79,8 +85,17 @@ impl fmt::Display for SemanticError {
                     )
                 }
             }
+            SemanticError::ZerothOrderOutput(name) => {
+                write!(f, "There is an equation assigning a value to {}", name)
+            }
             SemanticError::MissingEquation(name) => {
                 write!(f, "Variable {} has no equation defining its behavior", name)
+            }
+            SemanticError::MissingHorizontal(name) => {
+                write!(f, "Missing equation for the horizontal variable {}", name)
+            }
+            SemanticError::MissingVertical(name) => {
+                write!(f, "Missing equation for the vertical variable {}", name)
             }
         }
     }
@@ -92,7 +107,28 @@ pub struct State {
     vars: HashMap<String, Vec<f64>>,
 }
 
+impl State {
+    fn norm_per_dim(&self) -> f64 {
+        // The norm of the State as a vector
+        // accounting for the number of dimensions.
+        let mut mag2: f64 = 0.0;
+        let mut dims: usize = 0;
+        for derivs in self.vars.values() {
+            dims += derivs.len();
+            for val in derivs.iter() {
+                mag2 += val * val;
+            }
+        }
+        (mag2 / (dims as f64)).sqrt()
+    }
+
+    pub fn has_var(&self, index: &String) -> bool {
+        self.vars.contains_key(index)
+    }
+}
+
 fn split_deriv(s: &str) -> (&str, usize) {
+    // Counts the number of derivatives on variable:  "y'''"  ->  ("y", 3)
     let mut var = s.trim();
     let mut order = 0;
     while let Some(new_var) = var.strip_suffix('\'') {
@@ -113,6 +149,9 @@ impl<Q: Borrow<str> + ?Sized> Index<&Q> for State {
 impl<Q: Borrow<str> + ?Sized> IndexMut<&Q> for State {
     fn index_mut(&mut self, idx: &Q) -> &mut Self::Output {
         let (name, order) = split_deriv(idx.borrow());
+        if !self.vars.contains_key(name) {
+            self.vars.insert(name.into(), vec![0.0; order + 1]);
+        }
         &mut self.vars.get_mut(name).unwrap()[order]
     }
 }
@@ -159,6 +198,28 @@ impl FromStr for State {
             vars_unwrap.insert(name, derivs_unwrap);
         }
         Ok(State { vars: vars_unwrap })
+    }
+}
+
+impl MulAssign<f64> for State {
+    fn mul_assign(&mut self, scalar: f64) {
+        for (_, derivs) in self.vars.iter_mut() {
+            for val in derivs.iter_mut() {
+                *val *= scalar;
+            }
+        }
+    }
+}
+
+impl AddAssign<&State> for State {
+    fn add_assign(&mut self, rhs: &State) {
+        for (name, derivs) in self.vars.iter_mut() {
+            if let Some(rhs_derivs) = rhs.vars.get(name) {
+                for (val, rhs_val) in derivs.iter_mut().zip(rhs_derivs.iter()) {
+                    *val += *rhs_val;
+                }
+            }
+        }
     }
 }
 
@@ -264,21 +325,31 @@ pub struct Eqns(pub HashMap<Var, Expr>);
 
 #[derive(Debug, Clone)]
 pub struct System {
-    time_var: String,
+    horiz_var: String,
+    vert_var: String,
     eqns: HashMap<String, (usize, Expr)>,
 }
 
 impl System {
-    pub fn new(time_var: String, eqns: Eqns) -> Result<Self, SemanticError> {
+    pub fn new(
+        time_var: String,
+        horiz_var: String,
+        vert_var: String,
+        eqns: Eqns,
+    ) -> Result<Self, SemanticError> {
         // Re-key equations by the name of their output variable
         let mut eqns_by_name = HashMap::new();
         for (Var { name, order }, expr) in eqns.0.into_iter() {
-            if eqns_by_name.contains_key(&name) {
+            if order == 0 {
+                return Err(SemanticError::ZerothOrderOutput(name));
+            } else if eqns_by_name.contains_key(&name) {
                 return Err(SemanticError::RepeatOutputName(name));
+            } else if name == time_var {
+                return Err(SemanticError::DerivOfTime(Var { name, order }));
             }
             eqns_by_name.insert(name, (order, expr));
         }
-        let eqns = eqns_by_name;
+        let mut eqns = eqns_by_name;
 
         // Collect input variables and the maximum order of the their derivatives
         let mut inputs = HashMap::<&str, usize>::new();
@@ -317,18 +388,44 @@ impl System {
             }
         }
 
-        Ok(System { time_var, eqns })
+        // Make sure that the horizontal and vertical variables are present
+        if !eqns.contains_key(&horiz_var) {
+            return Err(SemanticError::MissingHorizontal(horiz_var));
+        } else if !eqns.contains_key(&vert_var) {
+            return Err(SemanticError::MissingVertical(vert_var));
+        }
+
+        // Insert equation t' = 1 so that time moves forward normally
+        eqns.insert(time_var, (1, Expr::Const(1.0)));
+
+        Ok(System {
+            eqns,
+            horiz_var,
+            vert_var,
+        })
     }
 
-    pub fn contains_var<Q: Borrow<str>>(&self, name: &Q) -> bool {
-        self.eqns.contains_key(name.borrow())
+    fn eval_assign(&self, pos: &State, vector: &mut State) {
+        for (name, (out_order, expr)) in self.eqns.iter() {
+            let pos_derivs = pos.vars.get(name).unwrap();
+            let vec_derivs = vector.vars.get_mut(name).unwrap();
+            for i in 1..*out_order {
+                vec_derivs[i - 1] = pos_derivs[i];
+            }
+            vec_derivs[*out_order - 1] = expr.eval(pos);
+        }
     }
 
     // On error, returns the missing variable
-    pub fn euler(&self, step_size: f64, mut state: State) -> Result<EulerIter<'_>, SemanticError> {
+    pub fn euler(
+        &self,
+        pos: State,
+        time_step: f64,
+        length_step: f64,
+    ) -> Result<EulerIter<'_>, SemanticError> {
         // Check that all variables are present
         for (name, (order, _)) in self.eqns.iter() {
-            if let Some(derivs) = state.vars.get(name) {
+            if let Some(derivs) = pos.vars.get(name) {
                 if derivs.len() < *order {
                     return Err(SemanticError::MissingDeriv(Var {
                         name: name.clone(),
@@ -343,52 +440,53 @@ impl System {
             }
         }
 
-        if !state.vars.contains_key(&self.time_var) {
-            state.vars.insert(self.time_var.clone(), vec![0.0]);
-        }
         Ok(EulerIter {
             system: self,
-            step_size,
-            state,
+            vector: pos.clone(),
+            pos,
+            time_step,
+            length_step,
+            time: 0.0,
+            length: 0.0,
         })
     }
 }
 
 pub struct EulerIter<'a> {
     system: &'a System,
-    step_size: f64,
-    state: State,
+    pos: State,
+    vector: State,
+    time_step: f64,
+    length_step: f64,
+    time: f64,
+    length: f64,
 }
 
 impl<'a> Iterator for EulerIter<'a> {
-    type Item = State;
+    // Item contains the elapsed time and length
+    // as well as the horizontal and vertical variables
+    type Item = (f64, f64, (f64, f64));
     fn next(&mut self) -> Option<Self::Item> {
-        // Calculate new values for non-time variables
-        let mut new_vars: HashMap<String, Vec<f64>> = self
-            .system
-            .eqns
-            .iter()
-            .map(|(name, (out_order, expr))| {
-                let max_order = out_order - 1;
-                let vals = &self.state.vars[name];
-                let mut new_vals = Vec::new();
+        // Calculate displacement vector for system and its magnitude
+        self.system.eval_assign(&self.pos, &mut self.vector);
+        let norm = self.vector.norm_per_dim();
 
-                for order in 0..max_order {
-                    new_vals.push(vals[order] + self.step_size * vals[order + 1]);
-                }
-                new_vals.push(vals[max_order] + self.step_size * expr.eval(&self.state));
-                (name.clone(), new_vals)
-            })
-            .collect();
+        // Use whichever step will be smaller
+        if self.time_step * norm < self.length_step {
+            self.vector *= self.time_step;
+            self.time += self.time_step;
+            self.length += self.time_step * norm;
+        } else {
+            self.vector *= self.length_step / norm;
+            self.time += self.length / norm;
+            self.length += self.length;
+        }
 
-        // Calculate new value of time variable
-        let time_var = self.system.time_var.as_str();
-        let time = self.state[time_var];
-        new_vars.insert(time_var.into(), vec![time + self.step_size]);
-
-        // Swap new state with old one and return the old one
-        let mut return_state = State { vars: new_vars };
-        std::mem::swap(&mut self.state, &mut return_state);
-        Some(return_state)
+        // Apply shift in position
+        self.pos += &self.vector;
+        // Get horizontal and vertical values
+        let x = self.pos[&self.system.horiz_var];
+        let y = self.pos[&self.system.vert_var];
+        Some((self.time, self.length, (x, y)))
     }
 }
