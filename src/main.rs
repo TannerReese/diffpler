@@ -39,6 +39,7 @@ fn main() {
             ))
             .value_parser(value_parser!(Eqns)),
         arg!(-i --init <STATE> ... "")
+            .required(true)
             .help(concat!(
                 "Semicolon separated list of equations defining the initial state\n",
                 "(i.e. \"t = -0.5; x = 1.5; y = -3; y' = -0.1; y'' = 5 * cos(pi / 7); z = 4; z' = 3 - pi\")",

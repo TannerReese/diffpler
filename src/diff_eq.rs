@@ -388,15 +388,18 @@ impl System {
             }
         }
 
-        // Make sure that the horizontal and vertical variables are present
-        if !eqns.contains_key(&horiz_var) {
-            return Err(SemanticError::MissingHorizontal(horiz_var));
-        } else if !eqns.contains_key(&vert_var) {
-            return Err(SemanticError::MissingVertical(vert_var));
-        }
-
         // Insert equation t' = 1 so that time moves forward normally
         eqns.insert(time_var, (1, Expr::Const(1.0)));
+
+        // Make sure that the horizontal and vertical variables are present
+        let (horiz_name, horiz_ord) = split_deriv(horiz_var.as_str());
+        if !eqns.get(horiz_name).is_some_and(|(max_ord, _)| horiz_ord < *max_ord) {
+            return Err(SemanticError::MissingHorizontal(horiz_var));
+        }
+        let (vert_name, vert_ord) = split_deriv(vert_var.as_str());
+        if !eqns.get(vert_name).is_some_and(|(max_ord, _)| vert_ord < *max_ord) {
+            return Err(SemanticError::MissingVertical(vert_var));
+        }
 
         Ok(System {
             eqns,
@@ -478,8 +481,8 @@ impl<'a> Iterator for EulerIter<'a> {
             self.length += self.time_step * norm;
         } else {
             self.vector *= self.length_step / norm;
-            self.time += self.length / norm;
-            self.length += self.length;
+            self.time += self.length_step / norm;
+            self.length += self.length_step;
         }
 
         // Apply shift in position
